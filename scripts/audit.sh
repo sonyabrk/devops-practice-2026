@@ -18,22 +18,32 @@ echo "[1] Служба SSH"
 check "Вход от имени root запрещён" "no" "$(sudo sshd -T | awk '/^permitrootlogin/{print $2}')"
 check "Парольная аутентификация отключена" "no" "$(sudo sshd -T | awk '/^passwordauthentication/{print $2}')"
 
-# TODO 1: порт отличен от 22
 port="$(sudo sshd -T | awk '/^port/{print $2}')"
 if [[ "$port" != "22" ]]; then result="yes"; else result="no"; fi
 check "Порт SSH отличен от 22" "yes" "$result"
 
-# TODO 2: maxauthtries равен 3
 check "MaxAuthTries равен 3" "3" "$(sudo sshd -T | awk '/^maxauthtries/{print $2}')"
 
 echo "[2] Межсетевой экран"
 check "Межсетевой экран активен" "active" "$(sudo ufw status | awk '/^Status:/{print $2}')"
-
-# TODO 3: политика по умолчанию для входящих равна deny
 check "Политика по умолчанию для входящих: deny" "deny" "$(sudo ufw status verbose | awk '/^Default:/{print $2}')"
 
 echo "[3] Учётные записи"
 awk -F: '$3>=1000 && $3<65534 {printf "  %s (uid=%s)\n",$1,$3}' /etc/passwd
+
+echo "[4] Веб-сервер"
+check "Служба nginx активна" "active" "$(systemctl is-active nginx)"
+
+sudo nginx -t >/dev/null 2>&1; rc=$?
+check "Конфигурация nginx корректна" "0" "$rc"
+
+CERT_DAYS="${CERT_DAYS:-30}"
+openssl x509 -checkend $((CERT_DAYS*86400)) -noout -in /etc/ssl/certs/devops.crt >/dev/null 2>&1; rc=$?
+check "Сертификат действителен ещё $CERT_DAYS дн." "0" "$rc"
+
+check "Нет файлов ресурса с записью для всех" "0" \
+      "$(find /var/www/devops-site -perm -o+w | wc -l | tr -d ' ')"
+check "Права ключа равны 600" "600" "$(sudo stat -c '%a' /etc/ssl/private/devops.key)"
 
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

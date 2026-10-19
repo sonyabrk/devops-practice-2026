@@ -148,3 +148,85 @@ sudo ufw logging medium
 `scripts/audit.sh` проверяет: root-вход запрещён, пароль отключён, порт не 22,
 MaxAuthTries равен 3, UFW активен, политика incoming равна deny. Код возврата 0 при
 успехе, 1 при ошибках.
+
+
+## 10. Веб-сервер
+
+### 10.1 Пакет и служба
+
+- Пакет: `nginx` (версия 1.28.3, Ubuntu), установка: `sudo apt update && sudo apt install -y nginx`.
+- Служба включена в автозапуск (`enabled`), главный процесс работает от root, рабочие процессы от `www-data`.
+- Проблема при установке: установщик оставил источник apt `/etc/apt/sources.list.d/cdrom.sources`. После отключения ISO `apt update` завершался ошибкой, и `apt install` не выполнялся. Решение:
+  `sudo mv /etc/apt/sources.list.d/cdrom.sources /etc/apt/sources.list.d/cdrom.sources.disabled`
+- Служба после установки оказалась остановлена (`inactive (dead)`), запущена вручную: `sudo systemctl start nginx`.
+- Профили UFW `Nginx HTTP/HTTPS/Full` не используются: правила для портов 80 и 443 уже заданы (раздел 6).
+
+### 10.2 Конфигурация ресурса
+
+- Файл: `/etc/nginx/sites-available/devops-site`, активирован ссылкой:
+  `sudo ln -s /etc/nginx/sites-available/devops-site /etc/nginx/sites-enabled/`
+- Стандартный ресурс отключён: удалена ссылка `/etc/nginx/sites-enabled/default` (файл в `sites-available` сохранён).
+- Два блока `server`:
+  - порты 80 (IPv4 и IPv6), `server_name devops.local`, `return 301 https://$host$request_uri;`;
+  - порты 443 ssl (IPv4 и IPv6), `server_name devops.local`, `ssl_protocols TLSv1.2 TLSv1.3`, `root /var/www/devops-site`, `index index.html`, `try_files $uri $uri/ =404`, `error_page 404 /404.html`.
+- Журналы: `/var/log/nginx/devops-site.access.log`, `/var/log/nginx/devops-site.error.log`.
+- Заголовок HSTS не используется: браузер запомнил бы требование доверенного сертификата, а сертификат самоподписанный.
+- Применение изменений только так: `sudo nginx -t && sudo systemctl reload nginx` (`nginx -t` запускать с `sudo`, иначе ошибка записи `/run/nginx.pid`).
+
+### 10.3 Каталог ресурса
+
+- Путь: `/var/www/devops-site`, владелец `devops:devops`.
+- Права: каталоги 755, файлы 644. Модель «владелец пишет, веб-сервер читает»: у `www-data` права только на чтение, создать или изменить файл он не может.
+- Создание:
+```
+  sudo mkdir -p /var/www/devops-site
+  sudo chown -R devops:devops /var/www/devops-site
+```
+- Состав: `index.html`, `404.html` (из каталога `site/` репозитория).
+
+### 10.4 Сертификат и ключ TLS
+
+| Файл | Путь | Владелец | Права |
+|---|---|---|---|
+| Сертификат | `/etc/ssl/certs/devops.crt` | root | 644 |
+| Закрытый ключ | `/etc/ssl/private/devops.key` | root | 600 |
+
+- Сертификат самоподписанный (subject и issuer совпадают: `CN=devops.local`), SAN: `DNS:devops.local`, срок действия 365 дней.
+- Команда формирования:
+```
+  sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/ssl/private/devops.key \
+    -out /etc/ssl/certs/devops.crt \
+    -subj "/CN=devops.local" \
+    -addext "subjectAltName=DNS:devops.local"
+```
+- Закрытый ключ не копируется за пределы `/etc/ssl/private` и не добавляется в репозиторий. Главный процесс nginx (root) читает ключ при запуске, рабочие процессы ему не нужны.
+- Доверие на хосте: сертификат копируется по SSH и передаётся клиенту явно:
+```
+  scp devops:/etc/ssl/certs/devops.crt ~/devops.crt
+  curl --cacert ~/devops.crt -I https://devops.local
+```
+- Сертификат действует до 19.10.2027, после этого его необходимо выпустить заново.
+
+### 10.5 Доставка содержимого
+
+- Скрипт `scripts/deploy.sh [--dry-run]` синхронизирует каталог `site/` репозитория с `/var/www/devops-site` командой
+  `rsync -avz --delete --chmod=D755,F644` через одно SSH-соединение (`BatchMode=yes`).
+- Перед доставкой скрипт проверяет наличие `site/index.html` и отсутствие незафиксированных изменений, после доставки проверяет доступность `https://devops.local` с проверкой сертификата (`--cacert`, без `-k`). Код возврата 0 при успехе, 1 при ошибке.
+- Параметр `--delete` всегда сначала проверяется с `--dry-run`: при пустом `site/` он удалил бы главную страницу (проверено на практике, результат 403).
+- Проблема: системный rsync на macOS не поддерживает `--chmod` (`invalid argument`). Решение: `brew install rsync`, убедиться, что `which rsync` показывает `/opt/homebrew/bin/rsync`.
+- Ограничение: `ufw limit` на порту 2222 блокирует источник после шести соединений за 30 секунд, поэтому команды `ssh`, `scp`, `rsync` подряд не запускаются.
+
+### 10.6 Проверка
+
+- Синтаксис: `sudo nginx -t`; порты: `sudo ss -tlnp | grep nginx` (80 и 443).
+- Перенаправление: `curl -I http://devops.local` (301, `Location: https://devops.local/`).
+- Доступность: `curl --cacert ~/devops.crt -I https://devops.local` (200).
+- Права: `ls -la /var/www/devops-site/`, `find /var/www/devops-site -perm -o+w` (пусто), `sudo ls -l /etc/ssl/private/devops.key`.
+- Автоматически: `scripts/audit.sh`, раздел `[4] Веб-сервер`.
+
+### 10.7 Снимок состояния
+
+| Наименование | Момент создания |
+|---|---|
+| Linux-04-nginx-https | после установки nginx, настройки HTTPS и перенаправления, до доставки через rsync |

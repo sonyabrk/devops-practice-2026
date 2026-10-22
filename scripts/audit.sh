@@ -56,5 +56,22 @@ check "Порты 5000 и 5432 не слушаются ни на одном ад
 
 check "Права файла .env равны 600" "600" "$(stat -c '%a' /home/devops/app/.env 2>/dev/null || echo none)"
 
+echo "[6] Контрольная работа № 2"
+KR2=/home/devops/kr2
+
+rid="$(docker compose --project-directory "$KR2" ps -q redis)"
+check "Redis healthy" "healthy" "$(docker inspect -f '{{.State.Health.Status}}' "$rid" 2>/dev/null)"
+
+check "Порт 8003 только на 127.0.0.1" "127.0.0.1:8003" \
+  "$(docker compose --project-directory "$KR2" port app 8003 2>/dev/null)"
+
+check "Права .env равны 600" "600" "$(stat -c %a "$KR2/.env")"
+
+if openssl x509 -checkend 2592000 -noout -in /etc/ssl/certs/kr2.crt >/dev/null; then r=yes; else r=no; fi
+check "Сертификат kr2 действует не менее 30 дней" "yes" "$r"
+
+if [[ -L /etc/nginx/sites-enabled/kr2 ]]; then r=yes; else r=no; fi
+check "Ресурс kr2 активирован" "yes" "$r"
+
 echo "Пройдено: $PASS, не пройдено: $FAIL"
 [[ $FAIL -eq 0 ]] && exit 0 || exit 1

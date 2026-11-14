@@ -6,12 +6,11 @@
     append: true
 
 - name: Pull reviewed application image
-  community.docker.docker_image:
+  community.docker.docker_image_pull:
     name: "{{ app_image }}"
     tag: "{{ app_tag }}"
-    source: pull
-    state: present
     platform: "{{ app_platform }}"
+    pull: not_present
 
 - name: Run application container
   community.docker.docker_container:

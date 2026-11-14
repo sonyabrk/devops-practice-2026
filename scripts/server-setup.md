@@ -259,3 +259,31 @@ MaxAuthTries равен 3, UFW активен, политика incoming рав�
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto $scheme;
   }
+
+  ## 12. Ansible
+
+### 12.1 Расположение и узлы
+- Проект: каталог `ansible/` в репозитории devops-practice-2026.
+- Управляющий узел: MacBook (macOS), Ansible 14.6.0 (ansible-core 2.21.6).
+- Управляемый узел: devops-vm, Ubuntu Server 26.04.1 (arm64), Host-only адрес 192.168.64.3, SSH порт 2222.
+
+### 12.2 Inventory и учётные записи
+- `inventory/bootstrap.ini`: пользователь devops, ключ ~/.ssh/devops_vm, запуск с `--ask-become-pass`.
+- `inventory/prod.ini`: тот же пользователь и ключ, запуск без вопросов (sudo NOPASSWD).
+- Парольный вход по SSH отключён; пароли и закрытый ключ в репозиторий не входят.
+
+### 12.3 Роли
+- base: проверка ОС, базовые пакеты, эмуляция amd64 (qemu-user-binfmt), репозиторий Docker, служба Docker.
+- ssh: пользователь devops, ключ, sudo, hardening SSH, UFW.
+- nginx: Nginx, reverse proxy, отключение прежних сайтов, проверка конфигурации.
+- app: загрузка образа, контейнер, проверка /health.
+
+### 12.4 Приложение
+- Образ: ghcr.io/sonyabrk/devops-ci-app, тег — полный SHA 1fc8e931a630e0c0358dfd1bbfe261ae6ccdcd89 (переменная app_tag в group_vars/all.yml).
+- Платформа образа: linux/amd64 (на arm64 работает через эмуляцию).
+- Контейнер devops-ci-app, порт 127.0.0.1:5000 → 5000, health endpoint /health.
+
+### 12.5 Команды
+- Первичный запуск: `ansible-playbook -i inventory/bootstrap.ini site.yml --ask-become-pass`
+- Повторный запуск: `ansible-playbook site.yml`
+- Read-only аудит: `ansible-playbook verify.yml`

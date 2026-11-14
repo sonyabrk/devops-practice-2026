@@ -1,0 +1,8 @@
+---
+app_image: "ghcr.io/sonyabrk/devops-ci-app"
+app_tag: "1fc8e931a630e0c0358dfd1bbfe261ae6ccdcd89"
+app_container_name: "devops-ci-app"
+app_host_port: 5000
+app_internal_port: 5000
+app_platform: "linux/amd64"
+ssh_port: 2222
